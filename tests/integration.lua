@@ -38,7 +38,7 @@ local function format(buf, extra)
 	formatter.format(vim.tbl_extend("force", { bufnr = buf, async = false }, extra or {}), function(err)
 		error, called = err, true
 	end)
-	check(called and not error, "Formatting failed: " .. tostring(error))
+	check(called and not error, "Formatting failed for " .. vim.api.nvim_buf_get_name(buf) .. ": " .. tostring(error))
 end
 local function run()
 	formatter.setup(opts)

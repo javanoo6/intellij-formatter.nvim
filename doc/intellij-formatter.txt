@@ -9,7 +9,7 @@ SETUP                                          *intellij-formatter-setup*
       -- jar = "/path/to/formatter-cli-full.jar",
       -- editorconfig = "/path/to/.editorconfig",
       daemon = true,
-      timeout_ms = 10000,
+      timeout_ms = 30000,
       optimize_imports = true,
       rearrange = true,
       format_on_save = false,
@@ -60,7 +60,8 @@ API                                            *intellij-formatter-api*
     formatter.info()              -- Printable configuration report.
 <
 Set conform = false and use conform_formatter() in your own Conform setup for
-manual integration. Default formatting timeout is 10 seconds.
+manual integration. Default formatting timeout is 30 seconds to allow cold JVM
+startup and initial engine extraction. It can be reduced for a warmed daemon.
 
 EDITORCONFIG                                   *intellij-formatter-editorconfig*
 

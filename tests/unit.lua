@@ -35,6 +35,7 @@ local real_system = vim.system
 
 local function run()
 	setup()
+	equal(formatter.options().timeout_ms, 30000, "Cold JVM startup has a 30-second allowance")
 	equal(#formatter.filetypes(), 15, "All supported filetypes registered")
 	equal(conform.formatters_by_ft.json, { "intellij_formatter", lsp_format = "never" }, "JSON uses IntelliJ")
 	equal(conform.formatters_by_ft.lua, { "stylua" }, "Unrelated formatters preserved")

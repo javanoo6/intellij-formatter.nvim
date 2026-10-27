@@ -128,7 +128,7 @@ require("intellij-formatter").setup({
   -- Omit to discover .editorconfig from each file's location.
   -- editorconfig = vim.fn.stdpath("config") .. "/.editorconfig",
 
-  timeout_ms = 10000,
+  timeout_ms = 30000, -- Includes the first engine extraction and JVM startup.
   daemon = true,
   optimize_imports = true, -- Java full-file requests only.
   rearrange = true, -- Java full-file requests only.
