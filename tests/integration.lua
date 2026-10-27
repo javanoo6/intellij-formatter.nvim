@@ -6,6 +6,7 @@ vim.opt.runtimepath:append(conform_path)
 local fixture = vim.fn.tempname()
 vim.fn.mkdir(fixture .. "/runtime", "p")
 local stdpath = vim.fn.stdpath
+local system = vim.system
 vim.fn.stdpath = function(kind)
 	return kind == "data" and fixture .. "/data" or stdpath(kind)
 end
@@ -42,18 +43,27 @@ local function format(buf, extra)
 end
 local function run()
 	formatter.setup(opts)
+	buffer(".editorconfig", { "root = true", "", "[*]", "indent_style = space", "indent_size = 2" })
 	if not opts.jar then
-		local completed, error
-		formatter.install({}, function(err)
+		check(not formatter.available(), "Fresh setup has no engine installed")
+		local first = buffer("first-use.py", { "value=1+2" })
+		local second = buffer("second-use.py", { "value=3+4" })
+		local completed, error, second_done, second_error
+		require("conform").format({ bufnr = first, async = true }, function(err)
 			error, completed = err, true
 		end)
+		formatter.format({ bufnr = second, async = true }, function(err)
+			second_error, second_done = err, true
+		end)
+		check(not completed and not second_done, "Initial formatting requests return while the JAR downloads")
 		wait_for(function()
-			return completed
-		end, 210000)
-		check(not error, "Engine installation failed: " .. tostring(error))
+			return completed and second_done
+		end, 270000)
+		check(not error and not second_error, "Queued first-use requests complete: " .. tostring(error or second_error))
+		check(content(first) == "value = 1 + 2", "First request finishes formatting without a manual install")
+		check(content(second) == "value = 3 + 4", "Concurrent first request also finishes automatically")
 	end
 	check(formatter.available(), "Engine is available")
-	buffer(".editorconfig", { "root = true", "", "[*]", "indent_style = space", "indent_size = 2" })
 	local samples = {
 		{
 			"Sample.java",
@@ -124,7 +134,7 @@ local function run()
 	local direct = buffer("conform-direct.py", { "value=5+6" })
 	local direct_error
 	check(
-		require("conform").formatters_by_ft.python.timeout_ms == 30000,
+		require("conform").formatters_by_ft.python().timeout_ms == 30000,
 		"Direct Conform calls inherit the configured timeout"
 	)
 	require("conform").format({ bufnr = direct }, function(error)
@@ -147,6 +157,36 @@ local function run()
 	check(content(async) == "value=99", "Stale async formatting cannot overwrite newer buffer edits")
 
 	formatter.setup(vim.tbl_extend("force", opts, { format_on_save = true }))
+	local cached
+	if not opts.jar then
+		local stopped = false
+		formatter.stop(function()
+			stopped = true
+		end)
+		wait_for(function()
+			return stopped
+		end)
+		cached = formatter.jar_path() .. ".test-cache"
+		assert(vim.uv.fs_rename(formatter.jar_path(), cached))
+		-- Reuse the already verified download as transport while exercising the
+		-- real checksum, cold JVM, and synchronous first-save path again.
+		vim.system = function(command, options, callback)
+			if command[1] ~= "curl" then
+				return system(command, options, callback)
+			end
+			local output
+			for index, value in ipairs(command) do
+				if value == "--output" then
+					output = command[index + 1]
+				end
+			end
+			assert(vim.uv.fs_copyfile(cached, output))
+			vim.schedule(function()
+				callback({ code = 0, stdout = "", stderr = "" })
+			end)
+			return {}
+		end
+	end
 	local on_save = buffer("save.yaml", { "root:", "   child:  1" })
 	vim.api.nvim_buf_call(on_save, function()
 		vim.cmd("silent write")
@@ -155,9 +195,15 @@ local function run()
 		table.concat(vim.fn.readfile(vim.api.nvim_buf_get_name(on_save)), "\n") == "root:\n  child: 1",
 		"Format-on-save writes formatted content"
 	)
+	if cached then
+		check(formatter.available(), "First save installs its engine automatically")
+		vim.system = system
+		vim.uv.fs_unlink(cached)
+	end
 end
 
 local ok, err = xpcall(run, debug.traceback)
+vim.system = system
 local stopped = false
 formatter.stop(function()
 	stopped = true

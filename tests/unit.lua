@@ -2,6 +2,10 @@ local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
 vim.opt.runtimepath:prepend(root)
 local fixture = vim.fn.tempname()
 vim.fn.mkdir(fixture, "p")
+local stdpath = vim.fn.stdpath
+vim.fn.stdpath = function(kind)
+	return kind == "data" and fixture .. "/data" or stdpath(kind)
+end
 local checks = 0
 local function equal(actual, expected, label)
 	assert(
@@ -38,9 +42,9 @@ local function run()
 	equal(formatter.options().timeout_ms, 30000, "Cold JVM startup has a 30-second allowance")
 	equal(#formatter.filetypes(), 15, "All supported filetypes registered")
 	equal(
-		conform.formatters_by_ft.json,
-		{ "intellij_formatter", lsp_format = "never", timeout_ms = 30000 },
-		"JSON uses IntelliJ with a cold-start timeout"
+		conform.formatters_by_ft.json(),
+		{ "intellij_formatter", lsp_format = "never", timeout_ms = 270000 },
+		"Missing engine gets an installation allowance"
 	)
 	equal(conform.formatters_by_ft.lua, { "stylua" }, "Unrelated formatters preserved")
 	equal(formatter.supports("yaml.helm-values"), true, "Helm values use YAML")
@@ -49,9 +53,13 @@ local function run()
 	local function command(ft, name, range)
 		local buf = vim.api.nvim_create_buf(false, true)
 		vim.bo[buf].filetype = ft
-		local args = formatter
-			.conform_formatter()
-			.args(nil, { buf = buf, filename = name or fixture .. "/Sample.java", range = range })
+		name = name or fixture .. "/Sample.java"
+		local args = require("intellij-formatter.runner").args(
+			formatter.options(),
+			{ buf = buf, filename = name, range = range },
+			formatter.jar_path(),
+			name
+		)
 		vim.api.nvim_buf_delete(buf, { force = true })
 		return args
 	end
@@ -102,6 +110,7 @@ local function run()
 	vim.fn.writefile({ "fixture" }, jar)
 	setup({ jar = jar })
 	equal(formatter.available(), true, "Local JAR supported")
+	equal(conform.formatters_by_ft.python().timeout_ms, 30000, "Cached or custom engine uses normal formatting timeout")
 	local target = vim.api.nvim_create_buf(false, true)
 	vim.bo[target].filetype = "python"
 	local current = vim.api.nvim_get_current_buf()
@@ -129,7 +138,11 @@ local function run()
 		false,
 		"Missing engine fails before formatting"
 	)
-	equal(called:find("IntellijFormatterInstall", 1, true) ~= nil, true, "Missing engine has actionable message")
+	equal(
+		called:find("configure an existing JAR", 1, true) ~= nil,
+		true,
+		"Missing custom engine has actionable message"
+	)
 	vim.api.nvim_buf_delete(target, { force = true })
 
 	local engine = require("intellij-formatter.engine")
@@ -186,6 +199,7 @@ end
 
 local ok, err = xpcall(run, debug.traceback)
 vim.system = real_system
+vim.fn.stdpath = stdpath
 vim.fn.delete(fixture, "rf")
 if not ok then
 	vim.api.nvim_err_writeln(err)

@@ -28,6 +28,10 @@ function M.check()
 	end
 	if vim.fn.filereadable(formatter.jar_path()) == 1 then
 		health.ok("Formatter JAR: " .. formatter.jar_path())
+	elseif config.auto_install and not config.jar then
+		health.info("The formatter engine will download automatically on the first formatting request")
+	elseif config.jar then
+		health.warn("Configured JAR missing: " .. config.jar)
 	else
 		health.warn("Formatter JAR missing; run :IntellijFormatterInstall")
 	end

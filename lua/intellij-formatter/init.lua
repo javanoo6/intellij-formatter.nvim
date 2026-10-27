@@ -27,6 +27,8 @@ local defaults = {
 	sha256 = release.sha256,
 	filetypes = default_filetypes,
 	timeout_ms = 30000,
+	install_timeout_ms = 240000,
+	auto_install = true,
 	daemon = true,
 	optimize_imports = true,
 	rearrange = true,
@@ -38,7 +40,10 @@ local config = vim.deepcopy(defaults)
 local supported = {}
 local previous_routes = {}
 local configured_conform
-local route = { "intellij_formatter", lsp_format = "never", timeout_ms = defaults.timeout_ms }
+local generation = 0
+local function route()
+	return { "intellij_formatter", lsp_format = "never", timeout_ms = M.timeout() }
+end
 local function index_filetypes()
 	supported = {}
 	for _, ft in ipairs(config.filetypes) do
@@ -75,59 +80,75 @@ function M.available()
 		return false, "JDK 21 is required; configure java or put java on PATH"
 	end
 	if vim.fn.filereadable(M.jar_path()) ~= 1 then
+		if config.auto_install and not config.jar then
+			return false, "Formatter engine will download automatically on the first formatting request"
+		end
+		if config.jar then
+			return false,
+				"Configured formatter JAR is missing: " .. config.jar .. ". Build it or configure an existing JAR."
+		end
 		return false, "Formatter JAR missing; run :IntellijFormatterInstall or configure jar with a local build"
 	end
 	return true
 end
 
+function M.timeout()
+	local installing = config.auto_install and not config.jar and vim.fn.filereadable(M.jar_path()) ~= 1
+	return config.timeout_ms + (installing and config.install_timeout_ms or 0)
+end
+
+local function can_install()
+	return config.auto_install and not config.jar and vim.fn.executable(config.java) == 1
+end
+
+function M.ensure(callback)
+	local ready, error = M.available()
+	if ready then
+		callback(nil, M.jar_path())
+		return
+	end
+	if can_install() then
+		M.install({}, callback)
+	else
+		callback(error)
+	end
+end
+
 function M.conform_formatter()
 	return {
-		command = function()
-			return config.java
-		end,
-		args = function(_, ctx)
-			local args = { "-jar", M.jar_path(), "--format" }
-			if vim.bo[ctx.buf].filetype == "java" and not ctx.range then
-				if config.optimize_imports then
-					args[#args + 1] = "--optimize-imports"
+		format = function(_, ctx, lines, callback)
+			local request_generation = generation
+			local tick = vim.api.nvim_buf_get_changedtick(ctx.buf)
+			local settings = M.options()
+			local function unchanged()
+				return generation == request_generation
+					and vim.api.nvim_buf_is_valid(ctx.buf)
+					and vim.api.nvim_buf_get_changedtick(ctx.buf) == tick
+			end
+			M.ensure(function(error, jar)
+				if error then
+					callback(error)
+					return
 				end
-				if config.rearrange then
-					args[#args + 1] = "--rearrange"
-				end
-			end
-			local editorconfig = config.editorconfig
-			if type(editorconfig) == "function" then
-				editorconfig = editorconfig(ctx)
-			end
-			if editorconfig then
-				assert(type(editorconfig) == "string", "editorconfig must return a path or nil")
-				editorconfig = vim.fn.fnamemodify(vim.fn.expand(editorconfig), ":p")
-				vim.list_extend(args, { "--editorconfig", editorconfig })
-			end
-			-- The pinned engine's daemon protocol splits paths on whitespace.
-			-- Use its argv-based one-shot mode automatically for those requests.
-			if not config.daemon or ctx.filename:find("%s") or (editorconfig and editorconfig:find("%s")) then
-				args[#args + 1] = "--no-daemon"
-			end
-			args[#args + 1] = "$FILENAME"
-			return args
+				require("intellij-formatter.runner").run(settings, ctx, jar, lines, unchanged, callback)
+			end)
 		end,
 		condition = function()
-			return M.available()
+			return M.available() or can_install()
 		end,
-		stdin = false,
 	}
 end
 
 function M.format(opts, callback)
 	opts = vim.tbl_extend("force", {
 		bufnr = 0,
-		timeout_ms = config.timeout_ms,
+		timeout_ms = M.timeout(),
 		lsp_format = "never",
 		formatters = { "intellij_formatter" },
 	}, opts or {})
 	local bufnr = opts.bufnr == 0 and vim.api.nvim_get_current_buf() or opts.bufnr
-	local ok, err = M.available()
+	local ready, err = M.available()
+	local ok = ready or can_install()
 	if not M.supports(vim.bo[bufnr].filetype) then
 		ok, err = false, "Unsupported filetype: " .. vim.bo[bufnr].filetype
 	end
@@ -170,8 +191,16 @@ function M.install(opts, callback)
 		end
 		return
 	end
-	notify("Installing formatter engine " .. config.version .. " (about 347 MiB)…")
-	require("intellij-formatter.engine").install({
+	local engine = require("intellij-formatter.engine")
+	local announce = not engine.installing(M.jar_path()) and (opts.force or vim.fn.filereadable(M.jar_path()) ~= 1)
+	if announce then
+		notify(
+			"Downloading formatter engine "
+				.. config.version
+				.. " (347 MiB). Formatting will continue when it is ready…"
+		)
+	end
+	engine.install({
 		jar = M.jar_path(),
 		url = "https://github.com/javanoo6/intellij-code-formatter/releases/download/"
 			.. config.version
@@ -179,7 +208,9 @@ function M.install(opts, callback)
 		sha256 = config.sha256,
 		force = opts.force,
 	}, function(err, path)
-		notify(err or ("Formatter engine ready: " .. path), err and vim.log.levels.ERROR or vim.log.levels.INFO)
+		if announce then
+			notify(err or ("Formatter engine ready: " .. path), err and vim.log.levels.ERROR or vim.log.levels.INFO)
+		end
 		if callback then
 			callback(err, path)
 		end
@@ -218,6 +249,7 @@ function M.info()
 		"EditorConfig: " .. (type(config.editorconfig) == "string" and config.editorconfig or "discovered per file"),
 		"Filetypes: " .. table.concat(config.filetypes, ", "),
 		"Format on save: " .. tostring(config.format_on_save),
+		"Automatic engine installation: " .. tostring(config.auto_install),
 	}, "\n")
 end
 
@@ -238,12 +270,24 @@ function M.setup(opts)
 	assert(type(next_config.filetypes) == "table", "filetypes must be a list")
 	assert(type(next_config.timeout_ms) == "number" and next_config.timeout_ms > 0, "timeout_ms must be positive")
 	assert(
+		type(next_config.install_timeout_ms) == "number" and next_config.install_timeout_ms > 0,
+		"install_timeout_ms must be positive"
+	)
+	assert(
 		next_config.editorconfig == nil
 			or type(next_config.editorconfig) == "string"
 			or type(next_config.editorconfig) == "function",
 		"editorconfig must be a path or function"
 	)
-	for _, key in ipairs({ "daemon", "optimize_imports", "rearrange", "format_on_save", "conform", "notify" }) do
+	for _, key in ipairs({
+		"auto_install",
+		"daemon",
+		"optimize_imports",
+		"rearrange",
+		"format_on_save",
+		"conform",
+		"notify",
+	}) do
 		assert(type(next_config[key]) == "boolean", key .. " must be a boolean")
 	end
 	if next_config.jar then
@@ -268,13 +312,13 @@ function M.setup(opts)
 	end
 	previous_routes, configured_conform = {}, conform
 	config = next_config
+	generation = generation + 1
 	index_filetypes()
-	route = { "intellij_formatter", lsp_format = "never", timeout_ms = config.timeout_ms }
 	if config.conform then
 		local by_ft = {}
 		for _, ft in ipairs(config.filetypes) do
 			previous_routes[ft] = { value = conform.formatters_by_ft[ft] }
-			by_ft[ft] = vim.deepcopy(route)
+			by_ft[ft] = route
 		end
 		conform.setup({ formatters = { intellij_formatter = M.conform_formatter() }, formatters_by_ft = by_ft })
 	end

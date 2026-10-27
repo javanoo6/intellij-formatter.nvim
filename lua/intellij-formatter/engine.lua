@@ -1,5 +1,9 @@
 local M = {}
-local installing = false
+local downloads = {}
+
+function M.installing(path)
+	return downloads[path] ~= nil
+end
 
 function M.checksum_command(path)
 	for _, tool in ipairs({
@@ -20,8 +24,13 @@ function M.install(opts, callback)
 	local function finish(err, path)
 		callback(err, path)
 	end
-	if installing then
-		finish("An engine installation is already running")
+	local pending = downloads[opts.jar]
+	if pending then
+		if pending.sha256 ~= opts.sha256 or pending.url ~= opts.url then
+			finish("Another engine installation is using this path with different release settings")
+		else
+			pending.callbacks[#pending.callbacks + 1] = callback
+		end
 		return
 	end
 	if vim.fn.filereadable(opts.jar) == 1 and not opts.force then
@@ -38,13 +47,26 @@ function M.install(opts, callback)
 		finish("Install sha256sum, shasum, openssl, or certutil to verify the engine download")
 		return
 	end
-	vim.fn.mkdir(vim.fs.dirname(opts.jar), "p")
+	local created, mkdir_error = pcall(vim.fn.mkdir, vim.fs.dirname(opts.jar), "p")
+	if not created then
+		finish("Cannot create engine directory: " .. tostring(mkdir_error))
+		return
+	end
 	local temporary = opts.jar .. "." .. vim.fn.getpid() .. ".download"
-	installing = true
+	downloads[opts.jar] = { sha256 = opts.sha256, url = opts.url, callbacks = { callback } }
 	local function done(err)
-		installing = false
+		local callbacks = downloads[opts.jar].callbacks
+		downloads[opts.jar] = nil
 		pcall(vim.uv.fs_unlink, temporary)
-		finish(err, not err and opts.jar or nil)
+		for _, waiting in ipairs(callbacks) do
+			-- One caller's callback must not prevent other queued requests completing.
+			local ok, error = pcall(waiting, err, not err and opts.jar or nil)
+			if not ok then
+				vim.schedule(function()
+					vim.notify(tostring(error), vim.log.levels.ERROR, { title = "IntelliJ formatter" })
+				end)
+			end
+		end
 	end
 	local function spawn(cmd, options, on_exit)
 		local ok, err = pcall(vim.system, cmd, options, vim.schedule_wrap(on_exit))

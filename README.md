@@ -16,7 +16,8 @@ An IntelliJ installation or language server is not required.
 
 The pinned engine is 0.0.8. The initial download is about 347 MiB; the engine
 extracts a larger IntelliJ runtime into the system temporary directory on first
-use. Downloads happen only when `:IntellijFormatterInstall` is invoked.
+use. The first formatting request downloads and verifies the engine automatically,
+then finishes formatting. Later requests reuse the local JAR and work offline.
 
 ## Installation
 
@@ -29,27 +30,23 @@ Add this spec to your plugin list, or put it in
 return {
   "javanoo6/intellij-formatter.nvim",
   dependencies = { "stevearc/conform.nvim" },
-  cmd = {
-    "IntellijFormat",
-    "IntellijFormatterInstall",
-    "IntellijFormatterInfo",
-    "IntellijFormatterStop",
-  },
+  event = { "BufReadPre", "BufNewFile" },
   keys = {
     { "<leader>cf", "<cmd>IntellijFormat<cr>", desc = "Format with IntelliJ" },
   },
-  opts = {},
+  opts = { format_on_save = true },
 }
 ```
 
-Run `:Lazy sync`, then `:IntellijFormatterInstall`. Installation downloads the
-pinned release JAR, checks its SHA-256 against the checksum shipped in this
-repository, and installs it into `stdpath("data")/intellij-formatter/0.0.8/`.
-A failed download or checksum check leaves an existing installation intact.
+Run `:Lazy sync`, open a supported file, and save it or press `<leader>cf`.
+The first request shows a download notification and installs the verified engine
+into `stdpath("data")/intellij-formatter/0.0.8/`. No install command or Maven build
+is needed. Concurrent requests share the download and continue when it is ready.
+If a buffer changes during installation, its queued request is discarded so newer
+edits stay intact; the installed engine is ready for the next formatting request.
 
-For format-on-save, replace `cmd = { ... }` with `event = "BufReadPre"` and use
-`opts = { format_on_save = true }`. If Conform already owns format-on-save in
-your config, leave this option disabled to avoid duplicate requests.
+If Conform already owns format-on-save in your config, use `opts = {}` to avoid
+duplicate save hooks. Manual formatting still uses `<leader>cf` or `:IntellijFormat`.
 
 ### vim-plug or native packages
 
@@ -66,8 +63,9 @@ Then configure them from `init.lua`:
 require("intellij-formatter").setup({})
 ```
 
-Run `:IntellijFormatterInstall` once. For native packages, clone both
-repositories into a directory on `packpath` and use the same setup call.
+The engine installs automatically when formatting is first requested. For native
+packages, clone both repositories into a directory on `packpath` and use the same
+setup call. Use `format_on_save = true` if you want formatting whenever you save.
 
 ## Supported filetypes
 
@@ -129,6 +127,8 @@ require("intellij-formatter").setup({
   -- editorconfig = vim.fn.stdpath("config") .. "/.editorconfig",
 
   timeout_ms = 30000, -- Includes the first engine extraction and JVM startup.
+  auto_install = true, -- Download the verified engine on the first request.
+  install_timeout_ms = 240000, -- Additional allowance while installing.
   daemon = true,
   optimize_imports = true, -- Java full-file requests only.
   rearrange = true, -- Java full-file requests only.
@@ -147,16 +147,20 @@ as its style root, including when formatting files outside it.
 
 The installer pins both `version` and `sha256`. To select a different engine
 release, supply both values; get the checksum from that release's `SHA256SUMS`.
-Use `:IntellijFormatterInstall!` to redownload and verify a managed installation.
-The install command does not overwrite a configured local `jar`.
+Set `auto_install = false` to prevent automatic downloads. You can still use
+`:IntellijFormatterInstall` to install ahead of time or `:IntellijFormatterInstall!`
+to redownload and verify a managed installation. A configured local `jar` is
+never replaced automatically or by the install command.
 
 ### Use an existing Conform configuration
 
 You can leave `conform = true` and retain your current format-on-save callback:
 setup changes only supported filetype routes. The formatter has no dependency
 on an IntelliJ LSP client. Those routes inherit `timeout_ms` unless your Conform
-call supplies a timeout explicitly. An existing short format-on-save timeout
-should be increased to allow initial runtime extraction and cold JVM startup.
+call supplies a timeout explicitly. The first request gets an additional download
+allowance; cached requests use the normal formatting timeout. If your own Conform
+callback passes a timeout explicitly, use `formatter.timeout()` for the same
+behavior rather than a short fixed timeout.
 If you need to own every route yourself:
 
 ```lua
@@ -174,9 +178,11 @@ require("conform").setup({
 })
 ```
 
-Conform's `condition` marks the formatter unavailable when Java or the JAR is
-missing. `IntellijFormat` reports the setup problem directly. Check availability
-before your own formatting calls if you want the same preflight behavior.
+Conform makes the formatter available when the JAR is installed or can be
+installed automatically. Inspecting formatter availability does not download
+anything. Missing Java, installation failures, and checksum mismatches produce
+an error and preserve buffer contents. `formatter.available()` reports whether
+the Java executable and JAR are already present; it does not start installation.
 
 ### Lua API
 
@@ -188,6 +194,8 @@ end)
 formatter.install({}, function(err, path) end)
 formatter.stop(function(err) end)
 formatter.available() -- Boolean, plus an error string when unavailable.
+formatter.ensure(function(err, path) end) -- Install automatically if needed.
+formatter.timeout() -- Formatting timeout plus any first-install allowance.
 formatter.jar_path()
 formatter.filetypes() -- A copy of the configured filetype list.
 formatter.supports("yaml")
@@ -202,7 +210,7 @@ CONFORM_PATH=/path/to/conform.nvim make integration
 ```
 
 Unit tests run without external plugins or network access. Integration tests
-download and verify the real engine, then exercise formatting, EditorConfig,
+trigger automatic installation of the real engine, then exercise formatting, EditorConfig,
 Java cleanup, ranges, whitespace paths, invalid scripts, stale async requests,
 format-on-save, and idempotence. To reuse an existing engine instead:
 

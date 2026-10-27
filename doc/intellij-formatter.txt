@@ -10,6 +10,8 @@ SETUP                                          *intellij-formatter-setup*
       -- editorconfig = "/path/to/.editorconfig",
       daemon = true,
       timeout_ms = 30000,
+      auto_install = true,
+      install_timeout_ms = 240000,
       optimize_imports = true,
       rearrange = true,
       format_on_save = false,
@@ -22,6 +24,11 @@ their LSP fallback. Other filetypes retain their configured formatters.
 Set filetypes = { "java", "python" } to select a subset. Repeated setup restores
 routes previously replaced by this integration, preserving later user overrides.
 There are no default keymaps. Configure your own mapping or use the commands.
+The first formatting request automatically downloads and verifies the engine,
+then continues formatting. No install command is required. Concurrent requests
+share the download. Buffer edits made while waiting are preserved by discarding
+the older request. Cached installations work offline. Set auto_install = false
+to prevent automatic downloads, or jar to use an existing local build.
 
 COMMANDS                                       *intellij-formatter-commands*
 
@@ -31,7 +38,7 @@ COMMANDS                                       *intellij-formatter-commands*
     filters Conform diff hunks; an intersecting hunk may include adjacent lines.
 
 :IntellijFormatterInstall[!]                    *:IntellijFormatterInstall*
-    Download and SHA-256-verify the pinned engine into stdpath('data').
+    Optionally download and SHA-256-verify the engine ahead of first use.
     Requires curl plus sha256sum, shasum, openssl, or certutil. Bang forces a
     redownload. Failed installation preserves the previous JAR. A configured
     local jar is never replaced by this command.
@@ -53,6 +60,8 @@ API                                            *intellij-formatter-api*
     formatter.stop(function(err) end)
     formatter.conform_formatter() -- Conform formatter definition.
     formatter.available()         -- Boolean, optional error string.
+    formatter.ensure(function(err, path) end) -- Automatic installation if needed.
+    formatter.timeout()           -- Includes first-install allowance when needed.
     formatter.filetypes()         -- Copy of configured filetype list.
     formatter.supports("yaml")     -- Boolean.
     formatter.jar_path()          -- Active JAR path.
@@ -62,6 +71,8 @@ API                                            *intellij-formatter-api*
 Set conform = false and use conform_formatter() in your own Conform setup for
 manual integration. Default formatting timeout is 30 seconds to allow cold JVM
 startup and initial engine extraction. It can be reduced for a warmed daemon.
+The first install gets an additional 240-second allowance. Explicit timeouts in
+your own Conform calls override this; use formatter.timeout() to inherit it.
 
 EDITORCONFIG                                   *intellij-formatter-editorconfig*
 
@@ -74,7 +85,8 @@ LIMITATIONS                                    *intellij-formatter-limitations*
 Python import cleanup is not supported. Helm templates are excluded; ordinary
 YAML Helm values are supported. Whitespace paths use one-shot mode to work around
 the engine's daemon protocol. The engine download is about 347 MiB and extracts
-a larger runtime into the system temporary directory. It is installed only on
-explicit request. The integration is validated on Linux; other hosts are untested.
+a larger runtime into the system temporary directory. It installs on first use
+unless auto_install is disabled or a custom jar is configured. The integration
+is validated on Linux; other hosts are untested.
 
 vim:tw=78:ts=8:noet:ft=help:norl:
