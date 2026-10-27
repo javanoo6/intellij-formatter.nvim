@@ -18,8 +18,8 @@ local default_filetypes = {
 	"zsh",
 }
 local release = {
-	version = "0.0.7",
-	sha256 = "95e555282f14c48942fda5bed8088a014f7b267b6b6f0c98564cddabc5100f3b",
+	version = "0.0.8",
+	sha256 = "842b9e5bfbc4a8173a9b27d9f0f9fec67f7fcf114637945ebb59e25945dcc06f",
 }
 local defaults = {
 	java = "java",
@@ -38,7 +38,7 @@ local config = vim.deepcopy(defaults)
 local supported = {}
 local previous_routes = {}
 local configured_conform
-local route = { "intellij_formatter", lsp_format = "never" }
+local route = { "intellij_formatter", lsp_format = "never", timeout_ms = defaults.timeout_ms }
 local function index_filetypes()
 	supported = {}
 	for _, ft in ipairs(config.filetypes) do
@@ -269,6 +269,7 @@ function M.setup(opts)
 	previous_routes, configured_conform = {}, conform
 	config = next_config
 	index_filetypes()
+	route = { "intellij_formatter", lsp_format = "never", timeout_ms = config.timeout_ms }
 	if config.conform then
 		local by_ft = {}
 		for _, ft in ipairs(config.filetypes) do

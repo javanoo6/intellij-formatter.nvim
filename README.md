@@ -14,7 +14,7 @@ An IntelliJ installation or language server is not required.
 - For managed engine installation: `curl` and one of `sha256sum`, `shasum`,
   `openssl`, or Windows `certutil`. A local JAR can be used instead.
 
-The pinned engine is 0.0.7. The initial download is about 347 MiB; the engine
+The pinned engine is 0.0.8. The initial download is about 347 MiB; the engine
 extracts a larger IntelliJ runtime into the system temporary directory on first
 use. Downloads happen only when `:IntellijFormatterInstall` is invoked.
 
@@ -44,7 +44,7 @@ return {
 
 Run `:Lazy sync`, then `:IntellijFormatterInstall`. Installation downloads the
 pinned release JAR, checks its SHA-256 against the checksum shipped in this
-repository, and installs it into `stdpath("data")/intellij-formatter/0.0.7/`.
+repository, and installs it into `stdpath("data")/intellij-formatter/0.0.8/`.
 A failed download or checksum check leaves an existing installation intact.
 
 For format-on-save, replace `cmd = { ... }` with `event = "BufReadPre"` and use
@@ -154,7 +154,10 @@ The install command does not overwrite a configured local `jar`.
 
 You can leave `conform = true` and retain your current format-on-save callback:
 setup changes only supported filetype routes. The formatter has no dependency
-on an IntelliJ LSP client. If you need to own every route yourself:
+on an IntelliJ LSP client. Those routes inherit `timeout_ms` unless your Conform
+call supplies a timeout explicitly. An existing short format-on-save timeout
+should be increased to allow initial runtime extraction and cold JVM startup.
+If you need to own every route yourself:
 
 ```lua
 local formatter = require("intellij-formatter")

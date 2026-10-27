@@ -37,11 +37,15 @@ local function run()
 	setup()
 	equal(formatter.options().timeout_ms, 30000, "Cold JVM startup has a 30-second allowance")
 	equal(#formatter.filetypes(), 15, "All supported filetypes registered")
-	equal(conform.formatters_by_ft.json, { "intellij_formatter", lsp_format = "never" }, "JSON uses IntelliJ")
+	equal(
+		conform.formatters_by_ft.json,
+		{ "intellij_formatter", lsp_format = "never", timeout_ms = 30000 },
+		"JSON uses IntelliJ with a cold-start timeout"
+	)
 	equal(conform.formatters_by_ft.lua, { "stylua" }, "Unrelated formatters preserved")
 	equal(formatter.supports("yaml.helm-values"), true, "Helm values use YAML")
 	equal(formatter.supports("helm"), false, "Templates excluded")
-	equal(formatter.jar_path():find("/0.0.7/formatter-cli-full.jar", 1, true) ~= nil, true, "Engine version pinned")
+	equal(formatter.jar_path():find("/0.0.8/formatter-cli-full.jar", 1, true) ~= nil, true, "Engine version pinned")
 	local function command(ft, name, range)
 		local buf = vim.api.nvim_create_buf(false, true)
 		vim.bo[buf].filetype = ft

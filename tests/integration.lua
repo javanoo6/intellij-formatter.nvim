@@ -121,6 +121,19 @@ local function run()
 	local subsequent = buffer("after-error.py", { "value=3+4" })
 	format(subsequent)
 	check(content(subsequent) == "value = 3 + 4", "Daemon remains usable after a failed request")
+	local direct = buffer("conform-direct.py", { "value=5+6" })
+	local direct_error
+	check(
+		require("conform").formatters_by_ft.python.timeout_ms == 30000,
+		"Direct Conform calls inherit the configured timeout"
+	)
+	require("conform").format({ bufnr = direct }, function(error)
+		direct_error = error
+	end)
+	check(
+		not direct_error and content(direct) == "value = 5 + 6",
+		"Direct Conform integration formats supported buffers"
+	)
 
 	local async = buffer("async.py", { "value=1+2" })
 	local completed
